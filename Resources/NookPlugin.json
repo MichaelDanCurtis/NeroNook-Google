@@ -1,0 +1,12 @@
+{
+  "id": "cafe.nero.plugin.google",
+  "name": "Google Workspace",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "summary": "Calendar, inbox, tasks and files with independent Google sign-in and settings.",
+  "capabilities": [
+    "Reads only the Google services you select",
+    "Keeps its own account in macOS Keychain",
+    "Contributes calendar events and dated tasks to the Nook agenda"
+  ]
+}
