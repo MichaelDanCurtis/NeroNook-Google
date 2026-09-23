@@ -9,3 +9,5 @@ Build/test with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift 
 The inherited Google implementation and tests were extracted from NeroNook 0.15.0. Calendar entries have a maximum ten-minute source-data lifetime and are removed from the host on disconnect/disable or expiry. Agenda includes the selected calendar day and today. Inbox and files are metadata only; Open hands off to the corresponding Google page. No mail sending, task editing or event mutations are implemented.
 
 Live sign-in and data sync, independent packaging, host rendering and automated tests are separate acceptance gates. Public OAuth verification, distribution licensing/signing and notarization remain release work.
+
+September 23 live check: the module signed in with its own account and displayed four calendars with a recent successful Calendar sync. Gmail, Tasks and Drive each reported denied access. The selected day was empty; populated host-agenda acceptance remains open. No denied service is counted as synced.
