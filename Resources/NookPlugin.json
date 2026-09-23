@@ -8,5 +8,10 @@
     "Reads only the Google services you select",
     "Keeps its own account in macOS Keychain",
     "Contributes calendar events and dated tasks to the Nook agenda"
-  ]
+  ],
+  "icon": {
+    "symbol": "envelope.fill",
+    "color": "89B4FF",
+    "badge": "calendar"
+  }
 }
