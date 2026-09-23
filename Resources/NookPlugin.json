@@ -1,7 +1,7 @@
 {
   "id": "cafe.nero.plugin.google",
-  "name": "Google Workspace",
-  "version": "0.1.0",
+  "name": "Google",
+  "version": "0.1.2",
   "apiVersion": 1,
   "summary": "Calendar, inbox, tasks and files with independent Google sign-in and settings.",
   "capabilities": [

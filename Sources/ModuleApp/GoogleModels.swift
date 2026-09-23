@@ -18,6 +18,7 @@ enum GoogleService: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
     var title: String { switch self { case .calendar: return "Google Calendar"; case .gmail: return "Gmail"; case .tasks: return "Google Tasks"; case .drive: return "Drive, Docs, Sheets & Slides" } }
     var scope: String { "https://www.googleapis.com/auth/" + (self == .calendar ? "calendar.readonly" : self == .gmail ? "gmail.metadata" : self == .tasks ? "tasks.readonly" : "drive.metadata.readonly") }
+    var apiName: String { switch self { case .calendar: return "calendar-json.googleapis.com"; case .gmail: return "gmail.googleapis.com"; case .tasks: return "tasks.googleapis.com"; case .drive: return "drive.googleapis.com" } }
     var detail: String { switch self {
     case .calendar: return "Events, invitations, Meet links and bookings already added by Google."
     case .gmail: return "Recent inbox senders, subjects and unread status. No message bodies or attachments."
@@ -28,18 +29,46 @@ enum GoogleService: String, CaseIterable, Identifiable, Codable {
 
 enum GoogleFailure: LocalizedError, Equatable {
     case configuration, cancelled, invalidCallback, signInExpired, reconnect, permission, keychain(Int32), http(Int), malformed, pageLimit
+    case apiDisabled, missingScope, organizationPolicy, rateLimited, quotaExceeded, serviceUnavailable
+    var invalidatesData: Bool { [.reconnect, .permission, .apiDisabled, .missingScope, .organizationPolicy].contains(self) }
     var errorDescription: String? { switch self {
+    case .apiDisabled: return "This API is disabled in the app’s Google Cloud project. Enable the service, then sync again; signing in again will not enable it."
+    case .missingScope: return "Google has not granted the access this service needs. Choose Update Google access and allow this service."
+    case .organizationPolicy: return "This account’s organization blocks the service. Ask its administrator to allow NeroNook, or select another account."
+    case .rateLimited: return "Google is limiting requests. Wait a little before syncing again; your sign-in is still connected."
+    case .quotaExceeded: return "The app’s Google API quota has been reached. Try later or check the project’s quota; reconnecting will not reset it."
+    case .serviceUnavailable: return "Google is temporarily unavailable. Try syncing again later."
     case .configuration: return "Google sign-in needs its one-time app setup. Expand Developer setup below."
     case .cancelled: return "Google sign-in was cancelled."
     case .invalidCallback: return "The sign-in response could not be verified. Please try again."
     case .signInExpired: return "Sign-in timed out. Please try again."
     case .reconnect: return "Your Google connection expired or was revoked. Reconnect your account."
-    case .permission: return "Google did not allow this service. Check access and that its API is enabled, then reconnect."
+    case .permission: return "Google denied this request without a recognized repair reason. Check this service’s access in Google settings."
     case .keychain: return "NeroNook could not access its saved Google connection in Keychain."
     case .http(let code): return "Google could not complete the request (\(code)). Try syncing again."
     case .malformed: return "Google returned an unexpected response. Please retry."
     case .pageLimit: return "This account returned more items than can be loaded at once. Narrow your calendar selection."
     } }
+}
+
+/// Classify documented reasons; never display arbitrary response bodies or credentials.
+enum GoogleResponseFailure {
+    static func classify(status: Int, data: Data) -> GoogleFailure {
+        if status == 401 { return .reconnect }
+        let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        if root?["error"] as? String == "invalid_grant" { return .reconnect }
+        let error = root?["error"] as? [String: Any]
+        let legacy = error?["errors"] as? [[String: Any]] ?? []
+        let details = error?["details"] as? [[String: Any]] ?? []
+        let reasons = Set((legacy + details).compactMap { ($0["reason"] as? String)?.lowercased() })
+        if !reasons.isDisjoint(with: ["service_disabled", "accessnotconfigured", "servicedisabled"]) { return .apiDisabled }
+        if !reasons.isDisjoint(with: ["access_token_scope_insufficient", "insufficientpermissions", "insufficientauthenticationscopes"]) { return .missingScope }
+        if reasons.contains("domainpolicy") { return .organizationPolicy }
+        if !reasons.isDisjoint(with: ["dailylimitexceeded", "quota_exceeded", "quotaexceeded"]) { return .quotaExceeded }
+        if status == 429 || !reasons.isDisjoint(with: ["ratelimitexceeded", "userratelimitexceeded", "rate_limit_exceeded"]) { return .rateLimited }
+        if (500...599).contains(status) { return .serviceUnavailable }
+        return status == 403 ? .permission : .http(status)
+    }
 }
 
 enum GoogleOAuthProtocol {

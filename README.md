@@ -1,4 +1,4 @@
-# Google Workspace for NeroNook
+# Google for NeroNook
 
 Independent native Google module with Calendar, Inbox, Tasks and Files panels. Owns its Google OAuth flow, service selection, credentials, network requests and views. NeroNook only renders the shared SDK snapshots and optional agenda-v1 entries. The plugin builds from its vendored SDK without host source and opens a standalone 16:9 workspace.
 
@@ -11,3 +11,13 @@ The inherited Google implementation and tests were extracted from NeroNook 0.15.
 Live sign-in and data sync, independent packaging, host rendering and automated tests are separate acceptance gates. Public OAuth verification, distribution licensing/signing and notarization remain release work.
 
 September 23 live check: the module signed in with its own account and displayed four calendars with a recent successful Calendar sync. Gmail, Tasks and Drive each reported denied access. The selected day was empty; populated host-agenda acceptance remains open. No denied service is counted as synced.
+
+September 23 update, 0.1.1: personal Gmail is supported explicitly. HTTP errors distinguish disabled APIs, missing scopes, organization policy, quota/rate limits and service outages, with service-specific recovery in Settings. Arbitrary response bodies are not shown. Invalid-access failures clear that service's stale data and sync time. Empty remote titles become valid display cards, and a rejected display snapshot yields an error view rather than stopping heartbeat updates.
+
+Live acceptance: the existing personal Gmail login loaded 20 inbox headers, 3 tasks and 25 Drive files after project API enablement. Calendar remains connected with four calendars; the selected day has no events. No OAuth scope expansion or token transplant. Eleven tests and the signed accountless four-panel/agenda process check pass. A separate 25-second signed production-process read verified real populated snapshots without printing message subjects, file names or credentials. Error classification follows Google's documented structured reasons: https://developers.google.com/workspace/gmail/api/guides/handle-errors.
+
+September 23 follow-up, 0.1.2: Calendar now uses a navigable month grid and day agenda; Inbox uses sender/subject/date rows, unread filtering and a selected-message summary; Tasks uses due-date rows and filters; Files uses list/grid layouts, file types, modified dates, search and name/recent sorting. These are provided through the independently vendored collections-v1 SDK, including the same renderer in the standalone window. Earlier hosts retain the card fallback. Calendar selection fetches the chosen day; unloaded days have no invented event counts. All existing scopes remain read-only. Task editing, message bodies and file content still open in Google.
+
+Validation: thirteen tests pass, including daylight-saving/month-boundary grids and production empty-presentation validation. `scripts/check-collections.py` verifies negotiated layouts and calendar selection in the signed process without loading the account; the original process check verifies the legacy fallback. Native installed acceptance inspected all four layouts, next-month/Today navigation, 20 inbox messages / 19 unread, three task rows and 25 files with list/grid switching. The selected calendar day was empty; populated-event live rendering remains unverified. The previous 0.1.1 package remains available through the host's recovery UI.
+
+Final signed package: `cafe.nero.plugin.google-0.1.2-95fd4bd21eef.app`. Installed and Running. The standalone 720×405 calendar and populated inbox were also visually checked. Inbox search returned no matches for an unmatched query, clearing it restored all 20 messages, and selection exposed a header summary plus Open in Gmail without opening external mail. The final Nook is left on Calendar.

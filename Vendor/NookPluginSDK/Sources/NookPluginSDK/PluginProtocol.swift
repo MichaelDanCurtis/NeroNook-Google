@@ -63,8 +63,9 @@ public struct PluginPanel: Codable, Equatable, Sendable, Identifiable {
     public var diagrams: [PluginDiagram]?
     public var cards: [PluginControlCard]?
     public var forms: [PluginForm]?
-    public init(_ id: String, _ title: String, usesMedia: Bool = false, sections: [PluginSection] = [], diagrams: [PluginDiagram]? = nil, cards: [PluginControlCard]? = nil, forms: [PluginForm]? = nil) {
-        self.id = id; self.title = title; self.usesMedia = usesMedia; self.sections = sections; self.diagrams = diagrams; self.cards = cards; self.forms = forms
+    public var collection: PluginCollection?
+    public init(_ id: String, _ title: String, usesMedia: Bool = false, sections: [PluginSection] = [], diagrams: [PluginDiagram]? = nil, cards: [PluginControlCard]? = nil, forms: [PluginForm]? = nil, collection: PluginCollection? = nil) {
+        self.id = id; self.title = title; self.usesMedia = usesMedia; self.sections = sections; self.diagrams = diagrams; self.cards = cards; self.forms = forms; self.collection = collection
     }
 }
 public struct PluginMedia: Codable, Equatable, Sendable {
@@ -93,7 +94,7 @@ public struct PluginSnapshot: Codable, Equatable, Sendable {
         self.title = title; self.status = status; self.activity = activity; self.progress = progress; self.fields = fields; self.actions = actions
         self.metrics = metrics; self.sections = sections; self.media = media; self.badge = badge; self.panels = panels; self.iconPNG = iconPNG
     }
-    public var displayActions: [PluginAction] { actions + (panels ?? []).flatMap { ($0.cards ?? []).flatMap(\.actions) } }
+    public var displayActions: [PluginAction] { actions + (panels ?? []).flatMap { ($0.cards ?? []).flatMap(\.actions) + ($0.collection?.displayActions ?? []) } }
     public func enabledDisplayAction(_ id: String) -> PluginAction? { displayActions.first { $0.id == id && $0.enabled } }
     public func validate() throws {
         var known: [String: PluginAction] = [:]
@@ -105,7 +106,12 @@ public struct PluginSnapshot: Codable, Equatable, Sendable {
         }
         let allCards = (panels ?? []).flatMap { $0.cards ?? [] }
         guard allCards.count <= 192 else { throw ModuleProblem("Too many control cards.") }
+        guard (panels ?? []).reduce(0, { $0 + ($1.collection?.items.count ?? 0) }) <= 192 else { throw ModuleProblem("Too many collection items.") }
         for panel in panels ?? [] {
+            if let collection = panel.collection {
+                guard panel.cards == nil, panel.forms == nil, panel.diagrams == nil, !panel.usesMedia else { throw ModuleProblem("Conflicting collection panel.") }
+                try collection.validate()
+            }
             if let forms = panel.forms {
                 guard (1...4).contains(forms.count), panel.cards == nil, panel.diagrams == nil, !panel.usesMedia,
                       Set(forms.map(\.id)).count == forms.count else { throw ModuleProblem("Invalid form panel.") }

@@ -1,7 +1,62 @@
 import XCTest
+import NookPluginSDK
 @testable import ModuleApp
 
 final class GoogleTests: XCTestCase {
+    @MainActor func testDisconnectedProductionCollectionsHaveValidDateActions() throws {
+        let date = try XCTUnwrap(GoogleDates.day("2026-09-23"))
+        let presentation = GoogleCollections.build(store: .shared, selectedDay: date)
+        let snapshot = PluginSnapshot(title: "Google", status: "Disconnected", panels: presentation.panels)
+        try snapshot.validate()
+        XCTAssertEqual(presentation.panels.compactMap { $0.collection?.layout }, [.calendar, .inbox, .tasks, .files])
+        for day in try XCTUnwrap(presentation.panels.first?.collection?.days) {
+            XCTAssertEqual(presentation.dates[day.action.id], day.date)
+            XCTAssertNotNil(snapshot.enabledDisplayAction(day.action.id))
+        }
+    }
+
+    func testMonthGridUsesLocalDaysAcrossDSTAndMonthBoundaries() throws {
+        for value in ["2024-02-29", "2024-03-10", "2024-11-03", "2026-12-31"] {
+            let selected = try XCTUnwrap(GoogleDates.day(value, calendar: pacific))
+            let days = GoogleCollectionDates.days(containing: selected, calendar: pacific)
+            XCTAssertEqual(days.count, 42)
+            XCTAssertEqual(Set(days).count, 42)
+            XCTAssertEqual(pacific.component(.weekday, from: days[0]), pacific.firstWeekday)
+            XCTAssertTrue(days.contains { pacific.isDate($0, inSameDayAs: selected) })
+            for pair in zip(days, days.dropFirst()) {
+                XCTAssertEqual(pacific.dateComponents([.day], from: pair.0, to: pair.1).day, 1)
+                XCTAssertEqual(pacific.component(.hour, from: pair.1), 0)
+            }
+        }
+    }
+    func testGoogleFailuresDistinguishRepairPathsWithoutLeakingResponseText() throws {
+        func failure(_ reason: String, status: Int = 403, modern: Bool = false) -> GoogleFailure {
+            let body: [String: Any] = ["error": ["message": "private-token-never-display", modern ? "details" : "errors": [["reason": reason]]]]
+            return GoogleResponseFailure.classify(status: status, data: try! JSONSerialization.data(withJSONObject: body))
+        }
+        XCTAssertEqual(failure("accessNotConfigured"), .apiDisabled)
+        XCTAssertEqual(failure("SERVICE_DISABLED", modern: true), .apiDisabled)
+        XCTAssertEqual(failure("insufficientPermissions"), .missingScope)
+        XCTAssertEqual(failure("ACCESS_TOKEN_SCOPE_INSUFFICIENT", modern: true), .missingScope)
+        XCTAssertEqual(failure("domainPolicy"), .organizationPolicy)
+        XCTAssertEqual(failure("dailyLimitExceeded"), .quotaExceeded)
+        XCTAssertEqual(failure("userRateLimitExceeded"), .rateLimited)
+        XCTAssertEqual(failure("unknown", status: 429), .rateLimited)
+        XCTAssertEqual(failure("unknown", status: 503), .serviceUnavailable)
+        XCTAssertEqual(failure("unknown"), .permission)
+        XCTAssertFalse(failure("unknown").localizedDescription.contains("private-token"))
+        XCTAssertEqual(GoogleResponseFailure.classify(status: 401, data: Data()), .reconnect)
+        XCTAssertEqual(GoogleResponseFailure.classify(status: 400, data: Data(#"{"error":"invalid_grant"}"#.utf8)), .reconnect)
+        XCTAssertEqual(GoogleResponseFailure.classify(status: 403, data: Data("not json".utf8)), .permission)
+        XCTAssertTrue(GoogleFailure.missingScope.invalidatesData)
+        XCTAssertFalse(GoogleFailure.rateLimited.invalidatesData)
+    }
+    func testEmptyGoogleItemTitleRemainsAValidDisplayCard() throws {
+        for title in ["", "   ", "\n", String(repeating: "文", count: 200)] {
+            let snapshot = PluginSnapshot(title: "Google", status: "Connected", panels: [.init("tasks", "Tasks", cards: [.init("task_0", title: GoogleCardText.title(title))])])
+            try snapshot.validate()
+        }
+    }
     private var pacific: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!

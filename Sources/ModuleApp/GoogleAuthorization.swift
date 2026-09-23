@@ -107,7 +107,7 @@ final class GoogleLoopback {
         }
     }
     private func respond(_ connection: NWConnection, valid: Bool, after: (() -> Void)? = nil) {
-        let body = valid ? "<h1>Return to Google Workspace</h1><p>You can close this tab. Google Workspace is finishing your Google connection.</p>" : "<h1>Invalid sign-in response</h1>"
+        let body = valid ? "<h1>Return to Google</h1><p>You can close this tab. Google is finishing your Google connection.</p>" : "<h1>Invalid sign-in response</h1>"
         let response = "HTTP/1.1 \(valid ? "200 OK" : "400 Bad Request")\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nConnection: close\r\n\r\n\(body)"
         connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
             Task { @MainActor in self?.close(connection); after?() }
@@ -145,15 +145,12 @@ final class GoogleHTTP: NSObject, URLSessionTaskDelegate {
     func data(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw GoogleFailure.malformed }
-        switch http.statusCode {
-        case 200..<300: return data
-        case 401: throw GoogleFailure.reconnect
-        case 403: throw GoogleFailure.permission
-        default:
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], obj["error"] as? String == "invalid_grant" { throw GoogleFailure.reconnect }
-            throw GoogleFailure.http(http.statusCode)
+        guard (200..<300).contains(http.statusCode) else {
+            throw GoogleResponseFailure.classify(status: http.statusCode, data: data)
         }
+        return data
     }
+
     func token(_ values: [String: String]) async throws -> GoogleTokenResponse {
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"; request.httpBody = GoogleOAuthProtocol.form(values)

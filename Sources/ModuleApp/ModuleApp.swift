@@ -4,6 +4,13 @@ import Combine
 import CryptoKit
 import NookPluginSDK
 
+enum GoogleCardText {
+    static func title(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled item" : String(trimmed.prefix(80))
+    }
+}
+
 @MainActor final class GooglePlugin: ObservableObject {
     let store = GoogleWorkspaceStore.shared
     @Published var settingsVisible = false
@@ -13,6 +20,8 @@ import NookPluginSDK
     private var timer: Timer?
     private var observations = Set<AnyCancellable>()
     private var agendaEnabled = false
+    private var collectionsEnabled = false
+    private var dateActions: [String: Date] = [:]
     private var selectedDay = Calendar.current.startOfDay(for: Date())
     private var links: [String: URL] = [:]
     private var activity: NSObjectProtocol?
@@ -46,7 +55,8 @@ import NookPluginSDK
         if session == nil {
             guard message.type == "hello" else { exit(1) }
             session = message.session; agendaEnabled = message.features?.contains("agenda-v1") == true
-            emit(.init(type: "ready", pluginID: id, session: message.session, features: ["dashboard-v1", "panels-v1", "control-cards-v1", "agenda-v1"]))
+            collectionsEnabled = message.features?.contains("collections-v1") == true
+            emit(.init(type: "ready", pluginID: id, session: message.session, features: ["dashboard-v1", "panels-v1", "control-cards-v1", "agenda-v1", "collections-v1"]))
             start(); publish(); return
         }
         guard message.session == session else { exit(1) }
@@ -56,6 +66,7 @@ import NookPluginSDK
         if message.type == "action", let action = message.action {
             if action == "configure" { configure() }
             else if action == "refresh" { store.sync() }
+            else if let date = dateActions[action] { selectedDay = date; store.showDate(date); publish() }
             else if let url = links[action], url.scheme == "https", url.user == nil, url.password == nil { NSWorkspace.shared.open(url) }
         }
     }
@@ -65,10 +76,10 @@ import NookPluginSDK
         func card(_ key: String, title: String, subtitle: String, value: String = "", url: URL? = nil) -> PluginControlCard {
             let action = "open_" + SHA256.hash(data: Data((url?.absoluteString ?? key).utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
             if let url { links[action] = url }
-            return .init(key, title: String(title.prefix(80)), subtitle: String(subtitle.prefix(100)), value: String(value.prefix(100)), actions: url == nil ? [] : [.init(action, "Open", symbol: "arrow.up.right")])
+            return .init(key, title: GoogleCardText.title(title), subtitle: String(subtitle.prefix(100)), value: String(value.prefix(100)), actions: url == nil ? [] : [.init(action, "Open", symbol: "arrow.up.right")])
         }
         func empty(_ service: GoogleService) -> [PluginControlCard] {
-            [.init("empty_" + service.rawValue, title: store.enabled(service) ? "No items" : "Enable " + service.title, detail: store.errors[service] ?? (store.connected ? "Choose services in Settings." : "Sign in using the gear button."), symbol: "globe")]
+            [.init("empty_" + service.rawValue, title: store.errors[service] != nil ? service.title + " needs attention" : store.enabled(service) ? "No items" : "Enable " + service.title, detail: store.errors[service] ?? (store.connected ? "Choose services in Settings." : "Sign in using the gear button."), symbol: "globe")]
         }
         let inbox = Array(store.messages.prefix(20).enumerated()).map { index, m in
             var url = URLComponents(string: "https://mail.google.com/mail/u/")!
@@ -79,13 +90,25 @@ import NookPluginSDK
         let files = Array(store.files.prefix(30).enumerated()).map { i, f in card("file_\(i)", title: f.name ?? "Untitled file", subtitle: f.mimeType ?? "Drive file", url: GoogleEvent.safeURL(f.webViewLink)) }
         let events = Array(AgendaMerge.merge(store.agenda(on: selectedDay), on: selectedDay).prefix(30).enumerated()).map { i, e in card("event_\(i)", title: e.title, subtitle: e.source, value: e.isAllDay ? "All day" : e.start.formatted(date: .omitted, time: .shortened), url: e.url) }
         let status = store.accountError ?? (!store.syncing.isEmpty ? "Syncing Google…" : store.email ?? "Connect your Google account")
-        let snapshot = PluginSnapshot(title: "Google Workspace", status: String(status.prefix(500)), activity: String(status.prefix(100)), actions: [.init("refresh", "Refresh", enabled: store.connected && store.syncing.isEmpty, symbol: "arrow.clockwise")], panels: [
+        var snapshot = PluginSnapshot(title: "Google", status: String(status.prefix(500)), activity: String(status.prefix(100)), actions: [.init("refresh", "Refresh", enabled: store.connected && store.syncing.isEmpty, symbol: "arrow.clockwise")], panels: [
             .init("calendar", "Calendar", cards: events.isEmpty ? empty(.calendar) : events),
             .init("inbox", "Inbox", cards: inbox.isEmpty ? empty(.gmail) : inbox),
             .init("tasks", "Tasks", cards: tasks.isEmpty ? empty(.tasks) : tasks),
             .init("files", "Files", cards: files.isEmpty ? empty(.drive) : files)
         ])
-        guard (try? snapshot.validate()) != nil else { return }
+        dateActions = [:]
+        if collectionsEnabled {
+            let presentation = GoogleCollections.build(store: store, selectedDay: selectedDay)
+            snapshot.panels = presentation.panels; snapshot.actions = []
+            links = presentation.links; dateActions = presentation.dates
+        }
+        do { try snapshot.validate() }
+        catch {
+            // A malformed remote item must not silence the plugin heartbeat.
+            links = [:]
+            let fallback = PluginSnapshot(title: "Google", status: "Some Google items could not be displayed. Open Google settings or refresh.", activity: "Google display needs attention", actions: [.init("refresh", "Refresh", enabled: store.connected)], panels: snapshot.panels?.map { .init($0.id, $0.title, cards: [.init("display_error", title: "Unable to display these items", detail: "The account is still connected. Try refreshing or open Google settings.")]) })
+            emit(.init(type: "snapshot", pluginID: id, session: session, snapshot: fallback)); publishAgenda(); return
+        }
         emit(.init(type: "snapshot", pluginID: id, session: session, snapshot: snapshot)); publishAgenda()
     }
     private func publishAgenda() {
@@ -115,7 +138,7 @@ import NookPluginSDK
         WindowGroup {
             GoogleWorkspaceView().padding(18).frame(width: 720, height: 405).preferredColorScheme(.dark)
                 .sheet(isPresented: $plugin.settingsVisible) {
-                    VStack { HStack { Text("Google Workspace Settings").font(.headline); Spacer(); Button("Done") { plugin.settingsVisible = false } }.padding(); GoogleSettingsView() }.frame(width: 580, height: 650)
+                    VStack { HStack { Text("Google Settings").font(.headline); Spacer(); Button("Done") { plugin.settingsVisible = false } }.padding(); GoogleSettingsView() }.frame(width: 580, height: 650)
                 }
                 .onAppear { if plugin.hosted { NSApp.windows.first { $0.canBecomeKey }?.orderOut(nil) } }
         }.windowResizability(.contentSize)

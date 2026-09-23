@@ -9,6 +9,7 @@ final class GoogleWorkspaceStore: ObservableObject {
     @Published private(set) var grantedScopes = Set<String>()
     @Published private(set) var isConnecting = false
     @Published private(set) var syncing = Set<GoogleService>()
+    @Published private(set) var failures: [GoogleService: GoogleFailure] = [:]
     @Published private(set) var errors: [GoogleService: String] = [:]
     @Published private(set) var accountError: String?
     @Published private(set) var lastSynced: [GoogleService: Date] = [:]
@@ -110,7 +111,7 @@ final class GoogleWorkspaceStore: ObservableObject {
         api = GoogleAPI(credential: credential); email = credential.email; grantedScopes = credential.scopes
         if client == nil { client = credential.client }
     }
-    private func clearData() { calendars = []; calendarEntries = [:]; messages = []; tasks = []; files = []; lastSynced = [:]; errors = [:]; syncing = [] }
+    private func clearData() { calendars = []; calendarEntries = [:]; messages = []; tasks = []; files = []; lastSynced = [:]; errors = [:]; failures = [:]; syncing = [] }
     private func servicesChanged(from old: Set<GoogleService>) {
         if !requestedServices.contains(.calendar) { calendars = []; calendarEntries = [:] }
         if !requestedServices.contains(.gmail) { messages = [] }
@@ -167,11 +168,13 @@ final class GoogleWorkspaceStore: ObservableObject {
                         let value = try await api.recentFiles()
                         guard generation == run, !Task.isCancelled else { return }; files = value
                     }
-                    lastSynced[service] = Date(); errors[service] = nil
+                    lastSynced[service] = Date(); errors[service] = nil; failures[service] = nil
                 } catch {
                     guard generation == run, !Task.isCancelled else { return }
                     errors[service] = error.localizedDescription
-                    if (error as? GoogleFailure) == .reconnect || (error as? GoogleFailure) == .permission {
+                    failures[service] = error as? GoogleFailure
+                    if failures[service]?.invalidatesData == true {
+                        lastSynced[service] = nil
                         switch service { case .calendar: calendarEntries = [:]; case .gmail: messages = []; case .tasks: tasks = []; case .drive: files = [] }
                     }
                 }
