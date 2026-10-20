@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import uuid
+from signing import resolve, sign, verify_update
 
 HERE = Path(__file__).resolve().parent
 FEATURES = ['dashboard-v1', 'panels-v1', 'control-cards-v1', 'actions-v1', 'forms-v1']
@@ -52,7 +53,8 @@ def validate(project, binaries):
     print('PASS: manifest accepted by the vendored SDK.')
     return value
 
-def package(project, binaries, value, identity='-'):
+def package(project, binaries, value, identity=None, reference=None, protocol_fixture=False):
+    identity, previous = ('-', None) if protocol_fixture else resolve(value['id'], identity, reference)
     output = project/'build'
     output.mkdir(exist_ok=True)
     # Construct only in a new staging directory; never replace an in-use app.
@@ -61,12 +63,17 @@ def package(project, binaries, value, identity='-'):
         (app/'Contents/MacOS').mkdir(parents=True)
         (app/'Contents/Resources').mkdir()
         shutil.copy2(binaries/'ModuleApp', app/'Contents/MacOS/ModuleApp')
+        sdk_assets = binaries/'NookPluginSDK_NookPluginSDK.bundle'
+        if sdk_assets.exists(): shutil.copytree(sdk_assets, app/'Contents/Resources'/sdk_assets.name)
         shutil.copy2(project/'Resources/NookPlugin.json', app/'Contents/Resources/NookPlugin.json')
         info = dict(CFBundleName=value['name'], CFBundleDisplayName=value['name'], CFBundleIdentifier=value['id'],
                     CFBundleExecutable='ModuleApp', CFBundlePackageType='APPL', CFBundleShortVersionString=value['version'],
-                    CFBundleVersion='1', LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True)
+                    CFBundleVersion='1', LSMinimumSystemVersion='14.0', LSUIElement=True, NSHighResolutionCapable=True)
         (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
-        run(['codesign', '--force', '--sign', identity, app], capture=True)
+        if protocol_fixture: run(['codesign', '--force', '--sign', '-', app], capture=True)
+        else:
+            sign(app, identity)
+            verify_update(app, previous)
         run(['codesign', '--verify', '--deep', '--strict', app], capture=True)
         digest = hashlib.sha256()
         for path in sorted(app.rglob('*')):
@@ -169,7 +176,9 @@ def main():
     for command in ['validate','test','pack','dev']:
         p=sub.add_parser(command);p.add_argument('project',type=Path,nargs='?',default=Path('.'))
         if command in ['dev','test']:p.add_argument('--replay',type=Path,help='Starter-only bounded local demo-state replay')
-        if command in ['pack','dev']:p.add_argument('--identity',default='-',help='Explicit code-signing identity; default is local ad hoc')
+        if command in ['pack','dev']:
+            p.add_argument('--identity',help='Stable signing certificate; otherwise reuse the installed identity')
+            p.add_argument('--reference',type=Path,help='Explicit preserved signed app for identity verification')
     args=parser.parse_args()
     if args.command=='create':create(args.destination.absolute(),args.id,args.name);return
     project=args.project.resolve()
@@ -177,7 +186,7 @@ def main():
     binaries=build(project,release=args.command=='pack')
     value=validate(project,binaries)
     if args.command=='validate':return
-    app=package(project,binaries,value,getattr(args,'identity','-'))
+    app=package(project,binaries,value,getattr(args,'identity',None),getattr(args,'reference',None),args.command=='test')
     if args.command=='test':
         run(['swift','test'],project)
         replay=args.replay.resolve() if args.replay else None

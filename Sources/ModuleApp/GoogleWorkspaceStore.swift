@@ -1,12 +1,14 @@
 import AppKit
 import Combine
 import SwiftUI
+import NookPluginSDK
 
 @MainActor
 final class GoogleWorkspaceStore: ObservableObject {
     static let shared = GoogleWorkspaceStore()
     @Published private(set) var email: String?
     @Published private(set) var grantedScopes = Set<String>()
+    @Published private(set) var restoring = false
     @Published private(set) var isConnecting = false
     @Published private(set) var syncing = Set<GoogleService>()
     @Published private(set) var failures: [GoogleService: GoogleFailure] = [:]
@@ -24,6 +26,7 @@ final class GoogleWorkspaceStore: ObservableObject {
     }
     private var api: GoogleAPI?
     private let auth = GoogleAuthorization()
+    private var restoreTask: Task<Void, Never>?
     private var authTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var generation = UUID()
@@ -57,12 +60,27 @@ final class GoogleWorkspaceStore: ObservableObject {
         if client == nil, let data = try? Data(contentsOf: Self.configURL) { client = try? JSONDecoder().decode(GoogleClientConfiguration.self, from: data) }
     }
     func start() {
-        do {
-            if let saved = try GoogleKeychain.load() { apply(saved); sync() }
-        } catch { accountError = error.localizedDescription }
+        restoreAccount(allowUI: false)
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in Task { @MainActor in self?.sync() } }
     }
-    func stop() { timer?.invalidate(); timer = nil; cancelSignIn(); syncTask?.cancel() }
+    func restoreAccount(allowUI: Bool = true) {
+        guard !connected, !isConnecting, !restoring else { return }
+        restoring = true
+        restoreTask?.cancel(); let attempt = UUID(); authGeneration = attempt
+        restoreTask = Task { [weak self] in
+            defer { if self?.authGeneration == attempt { self?.restoring = false; self?.restoreTask = nil } }
+            do {
+                let credential = try await Task.detached { try GoogleKeychain.load(allowUI: allowUI) }.value
+                guard !Task.isCancelled, let self, self.authGeneration == attempt else { return }
+                if let credential { self.apply(credential); self.accountError = nil; self.sync() }
+                else if allowUI { self.accountError = "No saved account. Choose Sign in to connect Google." }
+            } catch {
+                guard let self, self.authGeneration == attempt, !Task.isCancelled else { return }
+                self.accountError = "The saved Google account could not be restored. Choose Use saved sign-in in Settings, or sign in again."
+            }
+        }
+    }
+    func stop() { timer?.invalidate(); timer = nil; restoreTask?.cancel(); restoreTask = nil; restoring = false; cancelSignIn(); syncTask?.cancel() }
     var connected: Bool { email != nil }
     func enabled(_ service: GoogleService) -> Bool { connected && requestedServices.contains(service) && grantedScopes.contains(service.scope) }
     var needsAccessUpdate: Bool { requestedServices.contains { !grantedScopes.contains($0.scope) } }
@@ -78,6 +96,7 @@ final class GoogleWorkspaceStore: ObservableObject {
     }
     func connect() {
         guard !isConnecting else { return }
+        restoreTask?.cancel(); restoreTask = nil; restoring = false
         guard let client else { accountError = GoogleFailure.configuration.localizedDescription; return }
         accountError = nil; isConnecting = true
         let attempt = UUID(); authGeneration = attempt
@@ -99,7 +118,7 @@ final class GoogleWorkspaceStore: ObservableObject {
             if authGeneration == attempt { isConnecting = false; authTask = nil }
         }
     }
-    func cancelSignIn() { authGeneration = UUID(); auth.cancel(); authTask?.cancel(); authTask = nil; isConnecting = false }
+    func cancelSignIn() { restoreTask?.cancel(); restoreTask = nil; restoring = false; authGeneration = UUID(); auth.cancel(); authTask?.cancel(); authTask = nil; isConnecting = false }
     func disconnect() async {
         cancelSignIn(); generation = UUID(); syncTask?.cancel(); syncTask = nil
         await api?.invalidate(); api = nil
@@ -127,6 +146,25 @@ final class GoogleWorkspaceStore: ObservableObject {
         selectedCalendarIDs = ids
         calendarEntries = [:]
         sync()
+    }
+    func calendarRead(_ action: String, values: [String: PluginValue]) async throws -> [String: PluginValue] {
+        guard enabled(.calendar), let api else { throw GoogleFailure.missingScope }
+        let calendars = try await api.calendars().filter { self.isCalendarSelected($0.id) }
+        guard calendars.count <= 16 else { throw GoogleFailure.pageLimit }
+        let result: [String: PluginValue]
+        if action == PluginCalendarContract.list.id {
+            let range = try PluginCalendarContract.range(values)
+            var events: [PluginCalendarEvent] = []
+            for calendar in calendars { try Task.checkCancellation(); events += try await api.calendarEvents(calendar: calendar, start: range.start, end: range.end); guard events.count <= 10000 else { throw GoogleFailure.pageLimit } }
+            events.sort { $0.start == $1.start ? $0.reference.event < $1.reference.event : $0.start < $1.start }
+            result = try PluginCalendarContract.page(events, offset: range.offset)
+        } else {
+            let reference = try PluginCalendarContract.reference(values)
+            guard let calendar = calendars.first(where: { $0.id == reference.calendar }) else { throw GoogleFailure.permission }
+            result = try PluginCalendarContract.result(try await api.calendarEvent(reference, calendar: calendar))
+        }
+        try Task.checkCancellation(); guard enabled(.calendar), self.api === api else { throw CancellationError() }
+        return result
     }
     func showDate(_ date: Date) {
         guard GoogleDates.key(displayedDate) != GoogleDates.key(date) else { return }

@@ -16,8 +16,8 @@ struct GoogleKeychain {
             guard result == errSecSuccess else { throw GoogleFailure.keychain(result) }
         } else if status != errSecSuccess { throw GoogleFailure.keychain(status) }
     }
-    static func load() throws -> GoogleCredential? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "account", kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+    static func load(allowUI: Bool = true) throws -> GoogleCredential? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "account", kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne, kSecUseAuthenticationUI as String: allowUI ? kSecUseAuthenticationUIAllow : kSecUseAuthenticationUIFail]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }

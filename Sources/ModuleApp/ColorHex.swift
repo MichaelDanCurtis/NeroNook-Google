@@ -1,5 +1,6 @@
 // Adapted from Atoll; see ThirdPartyLicenses/Atoll.txt.
 import SwiftUI
+import NookPluginSDK
 
 extension Color {
     /// "#RRGGBB" or "RRGGBB" (case-insensitive). Falls back to black.

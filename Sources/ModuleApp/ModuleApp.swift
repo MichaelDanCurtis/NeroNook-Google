@@ -26,6 +26,8 @@ enum GoogleCardText {
     private var links: [String: URL] = [:]
     private var activity: NSObjectProtocol?
     private var started = false
+    private var calendarReads: [UUID: Task<Void, Never>] = [:]
+    private var seenReads = Set<UUID>()
     let hosted = CommandLine.arguments.contains("--neronook-plugin")
     let id = "cafe.nero.plugin.google"
     init() {
@@ -36,7 +38,7 @@ enum GoogleCardText {
                 let data = handle.availableData
                 Task { @MainActor in
                     guard let self else { return }
-                    guard !data.isEmpty else { self.store.stop(); exit(0) }
+                    guard !data.isEmpty else { for task in self.calendarReads.values { task.cancel() }; self.store.stop(); exit(0) }
                     do { for message in try self.input.append(data) { self.receive(message) } } catch { exit(1) }
                 }
             }
@@ -54,12 +56,33 @@ enum GoogleCardText {
         guard message.pluginID == id else { exit(1) }
         if session == nil {
             guard message.type == "hello" else { exit(1) }
-            session = message.session; agendaEnabled = message.features?.contains("agenda-v1") == true
+            session = message.session; PluginAppearanceStore.shared.beginSession(pluginID:id,session:message.session); agendaEnabled = message.features?.contains("agenda-v1") == true
             collectionsEnabled = message.features?.contains("collections-v1") == true
-            emit(.init(type: "ready", pluginID: id, session: message.session, features: ["dashboard-v1", "panels-v1", "control-cards-v1", "agenda-v1", "collections-v1"]))
+            emit(.init(type: "ready", pluginID: id, session: message.session, features: ["appearance-v1", "dashboard-v1", "panels-v1", "control-cards-v1", "agenda-v1", "collections-v1", "actions-v1"]))
+            if message.features?.contains("actions-v1") == true {
+                var list = PluginCalendarContract.list, read = PluginCalendarContract.read
+                list.title = "Read Google Calendar events for a selected day"; read.title = "Verify a linked Google Calendar event"
+                emit(.init(type: "bus", pluginID: id, session: message.session, bus: .init(.register, registration: .init(actions: [list, read]))))
+            }
             start(); publish(); return
         }
-        guard message.session == session else { exit(1) }
+        guard message.session == session else { exit(1) }; if message.type == "appearance" { _ = PluginAppearanceStore.shared.receive(message); return }
+        if let bus = message.bus {
+            if bus.operation == .cancel { calendarReads[bus.requestID]?.cancel(); return }
+            if bus.operation == .execute {
+                guard !seenReads.contains(bus.requestID), seenReads.count < 4096, calendarReads.count < 4,
+                      bus.address?.plugin == id, [PluginCalendarContract.list.id, PluginCalendarContract.read.id].contains(bus.address?.name ?? ""), let values = bus.values else { return }
+                seenReads.insert(bus.requestID)
+                calendarReads[bus.requestID] = Task { [weak self] in
+                    guard let self else { return }; defer { self.calendarReads[bus.requestID] = nil }
+                    do {
+                        guard !CommandLine.arguments.contains("--protocol-test") else { throw GoogleFailure.permission }
+                        let result = try await self.store.calendarRead(bus.address!.name, values: values)
+                        self.emit(.init(type: "bus", pluginID: self.id, session: message.session, bus: .init(.update, requestID: bus.requestID, update: .init(.succeeded, message: "Google calendar metadata", values: result))))
+                    } catch { self.emit(.init(type: "bus", pluginID: self.id, session: message.session, bus: .init(.update, requestID: bus.requestID, update: .init(error is CancellationError ? .cancelled : .failed, message: String(error.localizedDescription.prefix(240)))))) }
+                }; return
+            }
+        }
         if message.type == "agendaRequest", let date = message.agendaDate, date.timeIntervalSince1970.isFinite {
             selectedDay = Calendar.current.startOfDay(for: date); store.showDate(selectedDay); publishAgenda()
         }
@@ -90,7 +113,7 @@ enum GoogleCardText {
         let files = Array(store.files.prefix(30).enumerated()).map { i, f in card("file_\(i)", title: f.name ?? "Untitled file", subtitle: f.mimeType ?? "Drive file", url: GoogleEvent.safeURL(f.webViewLink)) }
         let events = Array(AgendaMerge.merge(store.agenda(on: selectedDay), on: selectedDay).prefix(30).enumerated()).map { i, e in card("event_\(i)", title: e.title, subtitle: e.source, value: e.isAllDay ? "All day" : e.start.formatted(date: .omitted, time: .shortened), url: e.url) }
         let status = store.accountError ?? (!store.syncing.isEmpty ? "Syncing Google…" : store.email ?? "Connect your Google account")
-        var snapshot = PluginSnapshot(title: "Google", status: String(status.prefix(500)), activity: String(status.prefix(100)), actions: [.init("refresh", "Refresh", enabled: store.connected && store.syncing.isEmpty, symbol: "arrow.clockwise")], panels: [
+        var snapshot = PluginSnapshot(title: "Google", status: String(status.prefix(500)), activity: String(status.prefix(100)), actions: [.init("refresh", "Refresh", enabled: store.connected && store.syncing.isEmpty, symbol: "arrow.clockwise", placement: .menu)], panels: [
             .init("calendar", "Calendar", cards: events.isEmpty ? empty(.calendar) : events),
             .init("inbox", "Inbox", cards: inbox.isEmpty ? empty(.gmail) : inbox),
             .init("tasks", "Tasks", cards: tasks.isEmpty ? empty(.tasks) : tasks),
@@ -106,7 +129,7 @@ enum GoogleCardText {
         catch {
             // A malformed remote item must not silence the plugin heartbeat.
             links = [:]
-            let fallback = PluginSnapshot(title: "Google", status: "Some Google items could not be displayed. Open Google settings or refresh.", activity: "Google display needs attention", actions: [.init("refresh", "Refresh", enabled: store.connected)], panels: snapshot.panels?.map { .init($0.id, $0.title, cards: [.init("display_error", title: "Unable to display these items", detail: "The account is still connected. Try refreshing or open Google settings.")]) })
+            let fallback = PluginSnapshot(title: "Google", status: "Some Google items could not be displayed. Open Google settings or refresh.", activity: "Google display needs attention", actions: [.init("refresh", "Refresh", enabled: store.connected, placement: .menu)], panels: snapshot.panels?.map { .init($0.id, $0.title, cards: [.init("display_error", title: "Unable to display these items", detail: "The account is still connected. Try refreshing or open Google settings.")]) })
             emit(.init(type: "snapshot", pluginID: id, session: session, snapshot: fallback)); publishAgenda(); return
         }
         emit(.init(type: "snapshot", pluginID: id, session: session, snapshot: snapshot)); publishAgenda()
@@ -136,9 +159,9 @@ enum GoogleCardText {
     init() { let model = GooglePlugin(); _plugin = StateObject(wrappedValue: model) }
     var body: some Scene {
         WindowGroup {
-            GoogleWorkspaceView().padding(18).frame(width: 720, height: 405).preferredColorScheme(.dark)
+            GoogleWorkspaceView().pluginThemed().padding(18).frame(width: 720, height: 405)
                 .sheet(isPresented: $plugin.settingsVisible) {
-                    VStack { HStack { Text("Google Settings").font(.headline); Spacer(); Button("Done") { plugin.settingsVisible = false } }.padding(); GoogleSettingsView() }.frame(width: 580, height: 650)
+                    GoogleSettingsView(done: { plugin.settingsVisible = false })
                 }
                 .onAppear { if plugin.hosted { NSApp.windows.first { $0.canBecomeKey }?.orderOut(nil) } }
         }.windowResizability(.contentSize)

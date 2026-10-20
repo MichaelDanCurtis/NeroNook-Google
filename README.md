@@ -1,3 +1,23 @@
+**October 18 · local 0.1.5 installed:** shared glass, paired Light/Dark, independent bundled presence/particle artwork and component motion. Saved connection/settings remain scoped to this plugin. The package reuses its original stable signing identity; saved account restored after owner Keychain approval and one ordinary restart. Fresh Calendar and Gmail unread metadata are observed; no mail/file mutation occurred. [Rollout evidence and limits](../NeroNook/reports/redesign-ember-2026-10-18/README.md). No public release.
+
+**October 13 · 0.1.4:** registers the optional generic read-only calendar SDK
+adapter for explicit meeting links. It lists selected calendars and resolves
+exact calendar/event/original occurrence IDs without changing the displayed
+agenda day or requesting new scopes. Timed recurrence uses originalStartTime;
+all-day recurrence keeps its original date across time-zone changes.
+[Shared contract](../NeroNook/SDK/CALENDAR.md).
+
+Saved account restoration runs off the main actor and initially disallows
+Keychain UI so a locked/keychain prompt cannot stall plugin heartbeat. **Use
+saved sign-in** allows a deliberate foreground unlock; Sign in / Reconnect
+remain the normal owned OAuth flow. No credential transplant or weakened
+Keychain control is introduced. Version 0.1.3's native heartbeat failure is
+retained as a negative receipt; 0.1.4 is installed and Running. The existing
+account reconnected normally and all four selected services report recent sync;
+both Google SDK and native selected-day agenda were empty on October 13.
+Fifteen tests and legacy / collections / calendar-action signed accountless
+process checks pass. Populated personal-event linkage remains unverified.
+
 # Google for NeroNook
 
 Independent native Google module with Calendar, Inbox, Tasks and Files panels. Owns its Google OAuth flow, service selection, credentials, network requests and views. NeroNook only renders the shared SDK snapshots and optional agenda-v1 entries. The plugin builds from its vendored SDK without host source and opens a standalone 16:9 workspace.
