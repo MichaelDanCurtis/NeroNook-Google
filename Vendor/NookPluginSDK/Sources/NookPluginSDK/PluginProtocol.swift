@@ -27,12 +27,14 @@ public struct PluginField: Codable, Equatable, Sendable {
     public init(_ label: String, _ value: String, symbol: String? = nil) { self.label = label; self.value = value; self.symbol = symbol }
 }
 public struct PluginAction: Codable, Equatable, Sendable, Identifiable {
+    public enum Placement: String, Codable, Sendable { case primary, menu }
     public var id: String
     public var label: String
     public var enabled: Bool
     public var symbol: String?
     public var confirmation: String?
-    public init(_ id: String, _ label: String, enabled: Bool = true, symbol: String? = nil, confirmation: String? = nil) { self.id = id; self.label = label; self.enabled = enabled; self.symbol = symbol; self.confirmation = confirmation }
+    public var placement: Placement?
+    public init(_ id: String, _ label: String, enabled: Bool = true, symbol: String? = nil, confirmation: String? = nil, placement: Placement? = nil) { self.id = id; self.label = label; self.enabled = enabled; self.symbol = symbol; self.confirmation = confirmation; self.placement = placement }
 }
 public struct PluginSection: Codable, Equatable, Sendable {
     public var title: String
@@ -90,13 +92,15 @@ public struct PluginSnapshot: Codable, Equatable, Sendable {
     public var badge: String?
     public var panels: [PluginPanel]?
     public var iconPNG: Data?
-    public init(title: String, status: String, activity: String = "", progress: Double? = nil, fields: [PluginField] = [], actions: [PluginAction] = [], metrics: [PluginField]? = nil, sections: [PluginSection]? = nil, media: PluginMedia? = nil, badge: String? = nil, panels: [PluginPanel]? = nil, iconPNG: Data? = nil) {
+    public var attention: PluginAttention?
+    public init(title: String, status: String, activity: String = "", progress: Double? = nil, fields: [PluginField] = [], actions: [PluginAction] = [], metrics: [PluginField]? = nil, sections: [PluginSection]? = nil, media: PluginMedia? = nil, badge: String? = nil, panels: [PluginPanel]? = nil, iconPNG: Data? = nil, attention: PluginAttention? = nil) {
         self.title = title; self.status = status; self.activity = activity; self.progress = progress; self.fields = fields; self.actions = actions
-        self.metrics = metrics; self.sections = sections; self.media = media; self.badge = badge; self.panels = panels; self.iconPNG = iconPNG
+        self.metrics = metrics; self.sections = sections; self.media = media; self.badge = badge; self.panels = panels; self.iconPNG = iconPNG; self.attention = attention
     }
     public var displayActions: [PluginAction] { actions + (panels ?? []).flatMap { ($0.cards ?? []).flatMap(\.actions) + ($0.collection?.displayActions ?? []) } }
     public func enabledDisplayAction(_ id: String) -> PluginAction? { displayActions.first { $0.id == id && $0.enabled } }
     public func validate() throws {
+        try attention?.validate()
         var known: [String: PluginAction] = [:]
         for action in displayActions {
             guard ModulePackage.validKey(action.id), !action.label.isEmpty, action.label.count <= 80,
@@ -154,6 +158,7 @@ public struct PluginSnapshot: Codable, Equatable, Sendable {
 /// One line of UTF-8 JSON per message. No URLs, credentials or executable code in snapshots.
 public struct PluginMessage: Codable, Sendable {
     public var apiVersion: Int = 1
+    public var appearance: PluginAppearanceDelivery?
     public var type: String
     public var pluginID: String
     public var session: UUID
@@ -166,8 +171,8 @@ public struct PluginMessage: Codable, Sendable {
     public var bus: PluginBusMessage?
     public var agenda: PluginAgenda?
     public var agendaDate: Date?
-    public init(type: String, pluginID: String, session: UUID, sequence: UInt64 = 0, action: String? = nil, snapshot: PluginSnapshot? = nil, features: [String]? = nil, visible: Bool? = nil, frame: PluginFrame? = nil, bus: PluginBusMessage? = nil, agenda: PluginAgenda? = nil, agendaDate: Date? = nil) {
-        self.type = type; self.pluginID = pluginID; self.session = session; self.sequence = sequence; self.action = action; self.snapshot = snapshot; self.features = features; self.visible = visible; self.frame = frame; self.bus = bus; self.agenda = agenda; self.agendaDate = agendaDate
+    public init(type: String, pluginID: String, session: UUID, sequence: UInt64 = 0, action: String? = nil, snapshot: PluginSnapshot? = nil, features: [String]? = nil, visible: Bool? = nil, frame: PluginFrame? = nil, bus: PluginBusMessage? = nil, agenda: PluginAgenda? = nil, agendaDate: Date? = nil, appearance: PluginAppearanceDelivery? = nil) {
+        self.appearance=appearance; self.type = type; self.pluginID = pluginID; self.session = session; self.sequence = sequence; self.action = action; self.snapshot = snapshot; self.features = features; self.visible = visible; self.frame = frame; self.bus = bus; self.agenda = agenda; self.agendaDate = agendaDate
     }
     public func encoded() throws -> Data {
         var data = try JSONEncoder().encode(self)

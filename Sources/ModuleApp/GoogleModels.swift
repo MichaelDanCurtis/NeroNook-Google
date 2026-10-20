@@ -126,6 +126,8 @@ struct GoogleEvent: Decodable {
     let htmlLink: String?
     let hangoutLink: String?
     let eventType: String?
+    let recurringEventId: String?
+    let originalStartTime: GoogleEventTime?
 }
 struct GoogleTaskList: Decodable { let id: String; let title: String? }
 struct GoogleTask: Decodable, Identifiable { let id: String; let title: String?; let due: String?; let status: String?; let webViewLink: String?; let deleted: Bool? }

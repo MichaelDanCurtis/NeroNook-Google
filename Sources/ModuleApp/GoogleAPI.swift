@@ -1,4 +1,5 @@
 import Foundation
+import NookPluginSDK
 
 actor GoogleAPI {
     private var credential: GoogleCredential
@@ -73,6 +74,21 @@ actor GoogleAPI {
             .init(name: "timeMin", value: formatter.string(from: start)), .init(name: "timeMax", value: formatter.string(from: end)),
             .init(name: "singleEvents", value: "true"), .init(name: "orderBy", value: "startTime"), .init(name: "showDeleted", value: "false"), .init(name: "maxResults", value: "2500")])
         return rows.compactMap { $0.agenda(calendar: calendar) }
+    }
+    func calendarEvents(calendar: GoogleCalendar, start: Date, end: Date) async throws -> [PluginCalendarEvent] {
+        let formatter = ISO8601DateFormatter()
+        let rows = try await pages(GoogleEvent.self, path: "/calendar/v3/calendars/\(Self.segment(calendar.id))/events", query: [
+            .init(name: "timeMin", value: formatter.string(from: start)), .init(name: "timeMax", value: formatter.string(from: end)),
+            .init(name: "singleEvents", value: "true"), .init(name: "orderBy", value: "startTime"), .init(name: "showDeleted", value: "false"), .init(name: "maxResults", value: "2500")])
+        return try rows.filter { $0.status != "cancelled" }.map { try $0.sdkEvent(calendar: calendar) }
+    }
+    func calendarEvent(_ reference: PluginCalendarReference, calendar: GoogleCalendar) async throws -> PluginCalendarEvent? {
+        do {
+            let event = try await get(GoogleEvent.self, path: "/calendar/v3/calendars/\(Self.segment(reference.calendar))/events/\(Self.segment(reference.event))")
+            guard event.status != "cancelled" else { return nil }
+            let value = try event.sdkEvent(calendar: calendar)
+            guard value.reference == reference else { throw GoogleFailure.malformed }; return value
+        } catch GoogleFailure.http(let code) where [404,410].contains(code) { return nil }
     }
     func inbox() async throws -> [GoogleMessage] {
         let list = try await get(GoogleMessageList.self, host: "gmail.googleapis.com", path: "/gmail/v1/users/me/messages", query: [.init(name: "labelIds", value: "INBOX"), .init(name: "maxResults", value: "20")])
