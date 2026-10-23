@@ -47,6 +47,9 @@ struct GoogleSettingsView: View {
                         }
                     }
                 }
+                Toggle("Read selected email text for Nero Flow", isOn: $google.mailWorkflowAccess).disabled(google.isConnecting || !google.requestedServices.contains(.gmail))
+                Text("Optional: update Google access, then choose one message in Nero Flow reply setup. The flow shares its text with the agent you select, which may use a remote backend. Inbox browsing still reads headers only. Reply drafts stay on this Mac; nothing is sent or saved to Gmail.").font(.caption).pluginSecondaryText()
+                if google.needsAccessUpdate, google.connected { Button("Update Google access…") { google.connect() }.disabled(google.isConnecting) }
                 Text("NeroNook reads the services you select. It does not send mail, edit events, or change your files. Turning a service off stops fetching and clears its view.").font(.caption).pluginSecondaryText()
             }
             if google.enabled(.calendar), !google.calendars.isEmpty {
@@ -107,6 +110,7 @@ struct GoogleWorkspaceView: View {
             if let collection = presentation.panels.first(where: { $0.id == page })?.collection {
                 PluginCollectionView(collection: collection) { action in
                     if action == "refresh" { google.sync() }
+                    else if action == "reply_setup" { GoogleReplyWindows.show() }
                     else if let date = presentation.dates[action] { day = date; google.showDate(date) }
                     else if let url = presentation.links[action] { NSWorkspace.shared.open(url) }
                 }.id(page).frame(maxWidth: .infinity, maxHeight: .infinity)

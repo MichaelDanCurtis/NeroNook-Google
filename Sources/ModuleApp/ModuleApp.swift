@@ -62,7 +62,7 @@ enum GoogleCardText {
             if message.features?.contains("actions-v1") == true {
                 var list = PluginCalendarContract.list, read = PluginCalendarContract.read
                 list.title = "Read Google Calendar events for a selected day"; read.title = "Verify a linked Google Calendar event"
-                emit(.init(type: "bus", pluginID: id, session: message.session, bus: .init(.register, registration: .init(actions: [list, read]))))
+                emit(.init(type: "bus", pluginID: id, session: message.session, bus: .init(.register, registration: .init(actions: [list, read, PluginMailReplyContract.read, PluginMailReplyContract.review]))))
             }
             start(); publish(); return
         }
@@ -71,14 +71,16 @@ enum GoogleCardText {
             if bus.operation == .cancel { calendarReads[bus.requestID]?.cancel(); return }
             if bus.operation == .execute {
                 guard !seenReads.contains(bus.requestID), seenReads.count < 4096, calendarReads.count < 4,
-                      bus.address?.plugin == id, [PluginCalendarContract.list.id, PluginCalendarContract.read.id].contains(bus.address?.name ?? ""), let values = bus.values else { return }
+                      bus.address?.plugin == id, [PluginCalendarContract.list.id, PluginCalendarContract.read.id, PluginMailReplyContract.read.id, PluginMailReplyContract.review.id].contains(bus.address?.name ?? ""), let values = bus.values else { return }
                 seenReads.insert(bus.requestID)
                 calendarReads[bus.requestID] = Task { [weak self] in
                     guard let self else { return }; defer { self.calendarReads[bus.requestID] = nil }
                     do {
                         guard !CommandLine.arguments.contains("--protocol-test") else { throw GoogleFailure.permission }
-                        let result = try await self.store.calendarRead(bus.address!.name, values: values)
-                        self.emit(.init(type: "bus", pluginID: self.id, session: message.session, bus: .init(.update, requestID: bus.requestID, update: .init(.succeeded, message: "Google calendar metadata", values: result))))
+                        let mail = [PluginMailReplyContract.read.id, PluginMailReplyContract.review.id].contains(bus.address!.name)
+                        let result = try await mail ? self.store.mailReplyAction(bus.address!.name, values: values) : self.store.calendarRead(bus.address!.name, values: values)
+                        if bus.address!.name == PluginMailReplyContract.review.id { GoogleReplyWindows.show() }
+                        self.emit(.init(type: "bus", pluginID: self.id, session: message.session, bus: .init(.update, requestID: bus.requestID, update: .init(.succeeded, message: "Google action completed", values: result))))
                     } catch { self.emit(.init(type: "bus", pluginID: self.id, session: message.session, bus: .init(.update, requestID: bus.requestID, update: .init(error is CancellationError ? .cancelled : .failed, message: String(error.localizedDescription.prefix(240)))))) }
                 }; return
             }
@@ -89,6 +91,7 @@ enum GoogleCardText {
         if message.type == "action", let action = message.action {
             if action == "configure" { configure() }
             else if action == "refresh" { store.sync() }
+            else if action == "reply_setup" { GoogleReplyWindows.show() }
             else if let date = dateActions[action] { selectedDay = date; store.showDate(date); publish() }
             else if let url = links[action], url.scheme == "https", url.user == nil, url.password == nil { NSWorkspace.shared.open(url) }
         }

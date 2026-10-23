@@ -24,6 +24,18 @@ final class GoogleWorkspaceStore: ObservableObject {
     @Published var requestedServices: Set<GoogleService> = [.calendar] {
         didSet { UserDefaults.standard.set(requestedServices.map(\.rawValue), forKey: "google.services"); servicesChanged(from: oldValue) }
     }
+    @Published var mailWorkflowAccess = UserDefaults.standard.bool(forKey: "google.mailWorkflowAccess") {
+        didSet { replySelectionEpoch=UUID(); UserDefaults.standard.set(mailWorkflowAccess,forKey:"google.mailWorkflowAccess"); if !mailWorkflowAccess { replyDrafts?.resetReferences(); selectedReplyMessageID="" } }
+    }
+    @Published var selectedReplyMessageID = "" { didSet { if selectedReplyMessageID != oldValue { replySelectionEpoch=UUID() } } }
+    private var replySelectionEpoch=UUID()
+    @Published var replyStatus = ""
+    @Published private(set) var latestReplyDraftID: UUID?
+    private var replyAccount = ""
+    lazy var replyDrafts: GoogleReplyDraftStore? = {
+        guard let folder = try? PluginStorage.directory(id:"cafe.nero.plugin.google") else { return nil }
+        return try? GoogleReplyDraftStore(directory:folder)
+    }()
     private var api: GoogleAPI?
     private let auth = GoogleAuthorization()
     private var restoreTask: Task<Void, Never>?
@@ -83,7 +95,7 @@ final class GoogleWorkspaceStore: ObservableObject {
     func stop() { timer?.invalidate(); timer = nil; restoreTask?.cancel(); restoreTask = nil; restoring = false; cancelSignIn(); syncTask?.cancel() }
     var connected: Bool { email != nil }
     func enabled(_ service: GoogleService) -> Bool { connected && requestedServices.contains(service) && grantedScopes.contains(service.scope) }
-    var needsAccessUpdate: Bool { requestedServices.contains { !grantedScopes.contains($0.scope) } }
+    var needsAccessUpdate: Bool { requestedServices.contains { !grantedScopes.contains($0.scope) } || (mailWorkflowAccess && requestedServices.contains(.gmail) && !grantedScopes.contains("https://www.googleapis.com/auth/gmail.readonly")) }
     func importConfiguration(_ url: URL) {
         guard !isConnecting else { return }
         do {
@@ -104,7 +116,7 @@ final class GoogleWorkspaceStore: ObservableObject {
         authTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let credential = try await auth.connect(client: client, services: services)
+                let credential = try await auth.connect(client: client, services: services, mailWorkflowAccess: mailWorkflowAccess)
                 try Task.checkCancellation()
                 guard authGeneration == attempt else { return }
                 // Invalidate old in-flight refreshes before saving the new account.
@@ -127,13 +139,14 @@ final class GoogleWorkspaceStore: ObservableObject {
         email = nil; grantedScopes = []; clearData(); selectedCalendarIDs = nil
     }
     private func apply(_ credential: GoogleCredential) {
+        replyDrafts?.resetReferences(); selectedReplyMessageID=""; replyAccount=credential.subject
         api = GoogleAPI(credential: credential); email = credential.email; grantedScopes = credential.scopes
         if client == nil { client = credential.client }
     }
-    private func clearData() { calendars = []; calendarEntries = [:]; messages = []; tasks = []; files = []; lastSynced = [:]; errors = [:]; failures = [:]; syncing = [] }
+    private func clearData() { latestReplyDraftID=nil; replyDrafts?.resetReferences();selectedReplyMessageID="";replyAccount=""; calendars = []; calendarEntries = [:]; messages = []; tasks = []; files = []; lastSynced = [:]; errors = [:]; failures = [:]; syncing = [] }
     private func servicesChanged(from old: Set<GoogleService>) {
         if !requestedServices.contains(.calendar) { calendars = []; calendarEntries = [:] }
-        if !requestedServices.contains(.gmail) { messages = [] }
+        if !requestedServices.contains(.gmail) { messages = []; replyDrafts?.resetReferences(); selectedReplyMessageID="" }
         if !requestedServices.contains(.tasks) { tasks = [] }
         if !requestedServices.contains(.drive) { files = [] }
         guard api != nil else { return }
@@ -146,6 +159,30 @@ final class GoogleWorkspaceStore: ObservableObject {
         selectedCalendarIDs = ids
         calendarEntries = [:]
         sync()
+    }
+    var canReadReply: Bool { enabled(.gmail) && mailWorkflowAccess && grantedScopes.contains("https://www.googleapis.com/auth/gmail.readonly") }
+    var localReplyDrafts: [GoogleLocalReplyDraft] { replyDrafts?.drafts.filter{$0.account==replyAccount} ?? [] }
+    func mailReplyAction(_ action:String,values:[String:PluginValue]) async throws -> [String:PluginValue] {
+        guard canReadReply,let api,let vault=replyDrafts else { throw GoogleFailure.missingScope }
+        let epoch=generation,selection=replySelectionEpoch,account=replyAccount
+        if action==PluginMailReplyContract.read.id {
+            try PluginMailReplyContract.read.input.validate(values)
+            guard messages.contains(where:{$0.id==selectedReplyMessageID}) else { throw GoogleReplyProblem.selection }
+            let message=try await api.replyMessage(selectedReplyMessageID)
+            try Task.checkCancellation()
+            guard generation==epoch,replySelectionEpoch==selection,replyAccount==account,canReadReply else { throw GoogleReplyProblem.stale }
+            return try vault.context(message,account:account)
+        }
+        try PluginMailReplyContract.review.input.validate(values)
+        guard action==PluginMailReplyContract.review.id,case .string(let reference)=values["reference"],case .string(let reply)=values["reply"],case .boolean(let truncated)=values["truncated"] else { throw GoogleFailure.malformed }
+        let draft=try vault.create(reference:reference,reply:reply,truncated:truncated,account:account)
+        latestReplyDraftID=draft.id
+        replyStatus="Local reply draft ready · nothing sent or saved to Gmail"
+        return ["draft_id":.string(draft.id.uuidString),"status":.string(replyStatus)]
+    }
+    func saveReplyEdit(_ id:UUID,body:String) throws {
+        guard connected,let vault=replyDrafts else { throw GoogleReplyProblem.stale }
+        try vault.update(id,body:body,account:replyAccount);replyStatus="Local edits saved · nothing sent"
     }
     func calendarRead(_ action: String, values: [String: PluginValue]) async throws -> [String: PluginValue] {
         guard enabled(.calendar), let api else { throw GoogleFailure.missingScope }
