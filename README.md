@@ -1,3 +1,9 @@
+**October 23 · installed live reply path verified:** the owner-requested old
+startup cancellation is reconciled with locked Dispatch non-admission proof.
+One actual Gmail → Ember → local reply workflow completes. The edited draft
+saves and reopens exactly after a managed Google restart; no reply email is sent.
+App binaries remain unchanged. [Evidence and limits](../NeroNook/reports/nero-flow-recovery-2026-10-23/README.md).
+
 **October 18 · local 0.1.5 installed:** shared glass, paired Light/Dark, independent bundled presence/particle artwork and component motion. Saved connection/settings remain scoped to this plugin. The package reuses its original stable signing identity; saved account restored after owner Keychain approval and one ordinary restart. Fresh Calendar and Gmail unread metadata are observed; no mail/file mutation occurred. [Rollout evidence and limits](../NeroNook/reports/redesign-ember-2026-10-18/README.md). No public release.
 
 **October 13 · 0.1.4:** registers the optional generic read-only calendar SDK
