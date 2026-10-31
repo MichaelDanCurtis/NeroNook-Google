@@ -30,7 +30,7 @@ actor GoogleAPI {
             return credential.accessToken
         } catch { refreshTask = nil; throw error }
     }
-    private func get<T: Decodable>(_ type: T.Type, host: String = "www.googleapis.com", path: String, query: [URLQueryItem] = [], retry: Bool = true) async throws -> T {
+    private func get<T: Decodable>(_ type: T.Type, host: String = "www.googleapis.com", path: String, query: [URLQueryItem] = [], retry: Bool = true, maximumBytes: Int? = nil) async throws -> T {
         try Task.checkCancellation()
         let token = try await accessToken()
         guard active, ["www.googleapis.com", "gmail.googleapis.com", "tasks.googleapis.com"].contains(host),
@@ -40,13 +40,13 @@ actor GoogleAPI {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         do {
-            let data = try await http.data(request)
+            let data = try await http.data(request, maximumBytes:maximumBytes)
             try Task.checkCancellation()
             guard active else { throw CancellationError() }
             return try JSONDecoder().decode(type, from: data)
         } catch GoogleFailure.reconnect where retry {
             _ = try await accessToken(forceRefresh: true)
-            return try await get(type, host: host, path: path, query: query, retry: false)
+            return try await get(type, host: host, path: path, query: query, retry: false, maximumBytes:maximumBytes)
         }
     }
     private func pages<T: Decodable>(_ type: T.Type, host: String = "www.googleapis.com", path: String, query: [URLQueryItem] = []) async throws -> [T] {
@@ -89,6 +89,12 @@ actor GoogleAPI {
             let value = try event.sdkEvent(calendar: calendar)
             guard value.reference == reference else { throw GoogleFailure.malformed }; return value
         } catch GoogleFailure.http(let code) where [404,410].contains(code) { return nil }
+    }
+    func replyMessage(_ id: String) async throws -> GoogleReplyMessage {
+        guard credential.scopes.contains("https://www.googleapis.com/auth/gmail.readonly"),
+              !id.isEmpty,id.utf8.count<=200,id.allSatisfy({$0.isHexDigit}) else { throw GoogleFailure.missingScope }
+        let message = try await get(GoogleReplyMessage.self,host:"gmail.googleapis.com",path:"/gmail/v1/users/me/messages/\(Self.segment(id))",query:[.init(name:"format",value:"full")], maximumBytes:262_144)
+        guard message.id==id else { throw GoogleFailure.malformed };return message
     }
     func inbox() async throws -> [GoogleMessage] {
         let list = try await get(GoogleMessageList.self, host: "gmail.googleapis.com", path: "/gmail/v1/users/me/messages", query: [.init(name: "labelIds", value: "INBOX"), .init(name: "maxResults", value: "20")])

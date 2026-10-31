@@ -142,7 +142,20 @@ final class GoogleHTTP: NSObject, URLSessionTaskDelegate {
     private lazy var session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     func close() { session.invalidateAndCancel() }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-    func data(_ request: URLRequest) async throws -> Data {
+    func data(_ request: URLRequest, maximumBytes: Int? = nil) async throws -> Data {
+        if let limit = maximumBytes {
+            let (stream, response) = try await session.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else { throw GoogleFailure.malformed }
+            guard response.expectedContentLength <= Int64(limit) else { throw GoogleReplyProblem.tooLong }
+            var data = Data()
+            for try await byte in stream {
+                guard data.count < limit else { throw GoogleReplyProblem.tooLong }
+                data.append(byte)
+            }
+            try Task.checkCancellation()
+            guard (200..<300).contains(http.statusCode) else { throw GoogleResponseFailure.classify(status:http.statusCode,data:data) }
+            return data
+        }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw GoogleFailure.malformed }
         guard (200..<300).contains(http.statusCode) else {
@@ -168,13 +181,13 @@ final class GoogleAuthorization {
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw GoogleFailure.invalidCallback }
         return GoogleOAuthProtocol.base64URL(Data(bytes))
     }
-    func connect(client: GoogleClientConfiguration, services: Set<GoogleService>) async throws -> GoogleCredential {
+    func connect(client: GoogleClientConfiguration, services: Set<GoogleService>, mailWorkflowAccess: Bool = false) async throws -> GoogleCredential {
         let verifier = try Self.random(), state = try Self.random()
         let server = GoogleLoopback(state: state); callback = server
         defer { server.cancel(); callback = nil }
         let redirect = try await server.start()
         try Task.checkCancellation()
-        let scopes = Set(services.map(\.scope)).union(["openid", "email"])
+        let scopes = Set(services.map(\.scope)).union(["openid", "email"]).union(mailWorkflowAccess && services.contains(.gmail) ? ["https://www.googleapis.com/auth/gmail.readonly"] : [])
         var url = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         url.queryItems = ["client_id": client.clientID, "redirect_uri": redirect.absoluteString, "response_type": "code", "scope": scopes.sorted().joined(separator: " "), "state": state, "code_challenge": GoogleOAuthProtocol.challenge(for: verifier), "code_challenge_method": "S256", "access_type": "offline", "prompt": "consent select_account"].map { URLQueryItem(name: $0.key, value: $0.value) }
         guard let authorizationURL = url.url, NSWorkspace.shared.open(authorizationURL) else { throw GoogleFailure.invalidCallback }

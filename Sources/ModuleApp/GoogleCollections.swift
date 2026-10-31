@@ -74,7 +74,7 @@ struct GoogleCollectionPresentation {
         }
         return .init(panels: [
             .init("calendar", "Calendar", collection: .init(.calendar, title: "Calendar", subtitle: status(.calendar, scope: "Selected day"), emptyText: empty(.calendar, normal: "No events on this day"), items: Array(events), selectedDate: selectedDay, days: days, actions: navigation)),
-            .init("inbox", "Inbox", collection: .init(.inbox, title: "Inbox", subtitle: status(.gmail, scope: "Latest 20 · Headers only"), emptyText: empty(.gmail, normal: "Your inbox is clear"), items: Array(inbox), actions: [refresh])),
+            .init("inbox", "Inbox", collection: .init(.inbox, title: "Inbox", subtitle: status(.gmail, scope: "Latest 20 · Headers only"), emptyText: empty(.gmail, normal: "Your inbox is clear"), items: Array(inbox), actions: [.init("reply_setup", "Nero Flow reply…", symbol: "arrow.triangle.branch"), refresh])),
             .init("tasks", "Tasks", collection: .init(.tasks, title: "Tasks", subtitle: status(.tasks, scope: "Read-only · Open a task to edit"), emptyText: empty(.tasks, normal: "No open tasks"), items: Array(tasks), actions: [refresh])),
             .init("files", "Files", collection: .init(.files, title: "Files", subtitle: status(.drive, scope: "Recent files in Drive"), emptyText: empty(.drive, normal: "No recent files"), items: Array(files), actions: [refresh]))
         ], links: links, dates: dates)

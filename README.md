@@ -1,3 +1,9 @@
+**October 23 · installed live reply path verified:** the owner-requested old
+startup cancellation is reconciled with locked Dispatch non-admission proof.
+One actual Gmail → Ember → local reply workflow completes. The edited draft
+saves and reopens exactly after a managed Google restart; no reply email is sent.
+App binaries remain unchanged. [Evidence and limits](../NeroNook/reports/nero-flow-recovery-2026-10-23/README.md).
+
 **October 18 · local 0.1.5 installed:** shared glass, paired Light/Dark, independent bundled presence/particle artwork and component motion. Saved connection/settings remain scoped to this plugin. The package reuses its original stable signing identity; saved account restored after owner Keychain approval and one ordinary restart. Fresh Calendar and Gmail unread metadata are observed; no mail/file mutation occurred. [Rollout evidence and limits](../NeroNook/reports/redesign-ember-2026-10-18/README.md). No public release.
 
 **October 13 · 0.1.4:** registers the optional generic read-only calendar SDK
@@ -41,3 +47,20 @@ September 23 follow-up, 0.1.2: Calendar now uses a navigable month grid and day 
 Validation: thirteen tests pass, including daylight-saving/month-boundary grids and production empty-presentation validation. `scripts/check-collections.py` verifies negotiated layouts and calendar selection in the signed process without loading the account; the original process check verifies the legacy fallback. Native installed acceptance inspected all four layouts, next-month/Today navigation, 20 inbox messages / 19 unread, three task rows and 25 files with list/grid switching. The selected calendar day was empty; populated-event live rendering remains unverified. The previous 0.1.1 package remains available through the host's recovery UI.
 
 Final signed package: `cafe.nero.plugin.google-0.1.2-95fd4bd21eef.app`. Installed and Running. The standalone 720×405 calendar and populated inbox were also visually checked. Inbox search returned no matches for an unmatched query, clearing it restored all 20 messages, and selection exposed a header summary plus Open in Gmail without opening external mail. The final Nook is left on Calendar.
+
+## October 23 · selected reply items (0.1.7, installed locally)
+
+Google now offers an explicit selection of up to five recent emails, plus optional
+SDK `list_reply_selection` and `read_reply_item` actions. Metadata listing does
+not fetch bodies. Item references pin account/selection and expire after one
+hour; changing selection or restarting clears them. Legacy single-message and
+local-draft action definitions remain unchanged. No OAuth scope expansion,
+Gmail draft write or sending was added.
+
+Three authored self-emails completed sequentially through Nero Flow and the
+unchanged Ember 0.5.13 provider into three independent local reply drafts. Each
+native Unicode/multiline edit reopened exactly after a managed restart; mode
+0600. 28 Swift tests (one opt-in fixture skip), legacy/modern handshakes and
+Developer ID local packaging pass. These are local acceptance checks, not a
+public release or broader reply-quality certification. Full receipts are in the
+host's `reports/nero-flow-mapping-2026-10-23/README.md`.
