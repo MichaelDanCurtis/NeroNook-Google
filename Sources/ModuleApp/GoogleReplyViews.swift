@@ -26,7 +26,7 @@ struct GoogleReplyView: View {
         ScrollView {
         VStack(alignment:.leading,spacing:16) {
             Text("Gmail → Ember → reply draft").font(.title2.weight(.semibold))
-            Text("Choose one email, then create the Reply draft starter in Nero Flow. Review the agent’s target and exact task before Send. The agent may use its configured remote backend and tools.").font(.callout).pluginSecondaryText()
+            Text("Choose one email or a small selection, then create the Reply draft starter in Nero Flow. Review the agent’s target and exact task before Send. The agent may use its configured remote backend and tools.").font(.callout).pluginSecondaryText()
             if !store.canReadReply {
                 Button("Enable selected-message access…") { settings=true }
                 Text("Optional Gmail read access must be enabled and approved in Google sign-in. Your existing inbox connection is unchanged.").font(.caption).pluginSecondaryText()
@@ -36,6 +36,15 @@ struct GoogleReplyView: View {
                 ForEach(store.messages) { item in Text(String((item.header("Subject")+" · "+item.header("From")).prefix(100))).tag(item.id) }
             }.disabled(!store.canReadReply)
             Text("Short plain-text messages only in this first version. Attachments and HTML-only messages are excluded. No body is fetched until you run the workflow.").font(.caption).pluginSecondaryText()
+            DisclosureGroup("Several replies · \(store.selectedReplyMessageIDs.count) of 5 selected") {
+                VStack(alignment:.leading,spacing:8) {
+                    Text("Select up to five emails, then choose Several selected messages in Nero Flow’s starter. Replies run one at a time, with a separate task review and local draft for each.").font(.caption).pluginSecondaryText()
+                    ForEach(store.messages) { item in
+                        Toggle(String(item.header("Subject").prefix(100)),isOn:Binding(get:{store.selectedReplyMessageIDs.contains(item.id)},set:{store.selectReplyMessage(item.id,selected:$0)}))
+                            .disabled(!store.canReadReply || (!store.selectedReplyMessageIDs.contains(item.id) && store.selectedReplyMessageIDs.count>=5))
+                    }
+                }.padding(.top,8)
+            }
             Divider()
             HStack {
                 Text("Local reply drafts").font(.headline);Spacer()

@@ -25,10 +25,12 @@ final class GoogleWorkspaceStore: ObservableObject {
         didSet { UserDefaults.standard.set(requestedServices.map(\.rawValue), forKey: "google.services"); servicesChanged(from: oldValue) }
     }
     @Published var mailWorkflowAccess = UserDefaults.standard.bool(forKey: "google.mailWorkflowAccess") {
-        didSet { replySelectionEpoch=UUID(); UserDefaults.standard.set(mailWorkflowAccess,forKey:"google.mailWorkflowAccess"); if !mailWorkflowAccess { replyDrafts?.resetReferences(); selectedReplyMessageID="" } }
+        didSet { replySelectionEpoch=UUID(); UserDefaults.standard.set(mailWorkflowAccess,forKey:"google.mailWorkflowAccess"); if !mailWorkflowAccess { replyDrafts?.resetReferences(); selectedReplyMessageID=""; clearReplyBatch() } }
     }
     @Published var selectedReplyMessageID = "" { didSet { if selectedReplyMessageID != oldValue { replySelectionEpoch=UUID() } } }
     private var replySelectionEpoch=UUID()
+    @Published private(set) var selectedReplyMessageIDs: [String] = []
+    private let replySelection = GoogleReplySelectionStore()
     @Published var replyStatus = ""
     @Published private(set) var latestReplyDraftID: UUID?
     private var replyAccount = ""
@@ -139,14 +141,14 @@ final class GoogleWorkspaceStore: ObservableObject {
         email = nil; grantedScopes = []; clearData(); selectedCalendarIDs = nil
     }
     private func apply(_ credential: GoogleCredential) {
-        replyDrafts?.resetReferences(); selectedReplyMessageID=""; replyAccount=credential.subject
+        replyDrafts?.resetReferences(); selectedReplyMessageID=""; clearReplyBatch(); replyAccount=credential.subject
         api = GoogleAPI(credential: credential); email = credential.email; grantedScopes = credential.scopes
         if client == nil { client = credential.client }
     }
-    private func clearData() { latestReplyDraftID=nil; replyDrafts?.resetReferences();selectedReplyMessageID="";replyAccount=""; calendars = []; calendarEntries = [:]; messages = []; tasks = []; files = []; lastSynced = [:]; errors = [:]; failures = [:]; syncing = [] }
+    private func clearData() { latestReplyDraftID=nil; replyDrafts?.resetReferences();selectedReplyMessageID=""; clearReplyBatch();replyAccount=""; calendars = []; calendarEntries = [:]; messages = []; tasks = []; files = []; lastSynced = [:]; errors = [:]; failures = [:]; syncing = [] }
     private func servicesChanged(from old: Set<GoogleService>) {
         if !requestedServices.contains(.calendar) { calendars = []; calendarEntries = [:] }
-        if !requestedServices.contains(.gmail) { messages = []; replyDrafts?.resetReferences(); selectedReplyMessageID="" }
+        if !requestedServices.contains(.gmail) { messages = []; replyDrafts?.resetReferences(); selectedReplyMessageID=""; clearReplyBatch() }
         if !requestedServices.contains(.tasks) { tasks = [] }
         if !requestedServices.contains(.drive) { files = [] }
         guard api != nil else { return }
@@ -162,9 +164,30 @@ final class GoogleWorkspaceStore: ObservableObject {
     }
     var canReadReply: Bool { enabled(.gmail) && mailWorkflowAccess && grantedScopes.contains("https://www.googleapis.com/auth/gmail.readonly") }
     var localReplyDrafts: [GoogleLocalReplyDraft] { replyDrafts?.drafts.filter{$0.account==replyAccount} ?? [] }
+    private func clearReplyBatch() { selectedReplyMessageIDs=[]; replySelection.reset() }
+    func selectReplyMessage(_ id: String, selected: Bool) {
+        guard canReadReply, messages.contains(where:{$0.id==id}) else { return }
+        var ids=selectedReplyMessageIDs.filter{$0 != id}
+        if selected { ids.append(id) }
+        do { try replySelection.select(ids, account:replyAccount); selectedReplyMessageIDs=ids; replyStatus="\(ids.count) of 5 messages selected" }
+        catch { replyStatus="Choose at most five messages." }
+    }
     func mailReplyAction(_ action:String,values:[String:PluginValue]) async throws -> [String:PluginValue] {
         guard canReadReply,let api,let vault=replyDrafts else { throw GoogleFailure.missingScope }
         let epoch=generation,selection=replySelectionEpoch,account=replyAccount
+        if action==PluginMailReplyBatchContract.list.id {
+            return try replySelection.list(values:values,headers:Dictionary(uniqueKeysWithValues:messages.map{($0.id,$0.header("Subject"))}),account:account)
+        }
+        if action==PluginMailReplyBatchContract.read.id {
+            try PluginMailReplyBatchContract.read.input.validate(values)
+            guard case .string(let reference)=values["reference"] else { throw GoogleFailure.malformed }
+            let messageID=try replySelection.message(reference,account:account), selectionID=replySelection.id
+            let message=try await api.replyMessage(messageID)
+            try Task.checkCancellation()
+            guard generation==epoch, replyAccount==account, canReadReply, replySelection.id==selectionID,
+                  try replySelection.message(reference,account:account)==messageID, message.id==messageID else { throw GoogleReplyProblem.stale }
+            return try vault.context(message,account:account)
+        }
         if action==PluginMailReplyContract.read.id {
             try PluginMailReplyContract.read.input.validate(values)
             guard messages.contains(where:{$0.id==selectedReplyMessageID}) else { throw GoogleReplyProblem.selection }
